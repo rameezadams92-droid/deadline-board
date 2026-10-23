@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deadline Board</title>
+<style>
+  :root {
+    --bg: #f2f5f3; --surface: #ffffff; --ink: #14201b; --muted: #5c6b64; --line: #d5ded9;
+    --accent: #0e5a6b; --accent-ink: #ffffff; --danger: #a4262c;
+    --soon: #b4540a; --ok: #2d6a4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111917; --surface: #19241f; --ink: #e8efeb; --muted: #94a69d; --line: #2c3b34;
+            --accent: #5cc0d3; --accent-ink: #08201f; --danger: #ff8a8f; --soon: #f0a35e; --ok: #7ccf9f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  form { background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+         padding: 16px; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+  form .wide { grid-column: 1 / -1; }
+  label { display: grid; gap: 4px; font-size: .875rem; color: var(--muted); }
+  input, select, textarea { font: inherit; color: var(--ink); background: var(--bg);
+         border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button { font: inherit; cursor: pointer; border-radius: 6px; padding: 8px 14px;
+           border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
+  button.ghost { background: transparent; color: var(--danger); border-color: var(--line); }
+  #msg { min-height: 1.5em; margin: 12px 0; color: var(--danger); }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  li { background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+       padding: 14px 16px; display: grid; grid-template-columns: 84px 1fr auto; gap: 14px; align-items: center; }
+  .due { text-align: center; line-height: 1.1; }
+  .due b { display: block; font-size: 1.9rem; }
+  .due span { font-size: .75rem; color: var(--muted); }
+  .due.soon b { color: var(--soon); } .due.ok b { color: var(--ok); } .due.past b { color: var(--muted); }
+  .title { font-weight: 600; } .meta { color: var(--muted); font-size: .875rem; }
+  .actions { display: grid; gap: 6px; justify-items: end; }
+  .actions select { width: auto; padding: 4px 8px; font-size: .875rem; }
+  .empty { color: var(--muted); padding: 24px 0; }
+  @media (max-width: 560px) {
+    form { grid-template-columns: 1fr; }
+    li { grid-template-columns: 64px 1fr; } .actions { grid-column: 1 / -1; grid-auto-flow: column; justify-content: space-between; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Deadline Board</h1>
+  <p class="sub">Keep track of bursary and job applications, soonest deadline first.</p>
+
+  <form id="form">
+    <label>Organisation<input name="organisation" required maxlength="100" placeholder="e.g. Standard Bank"></label>
+    <label>Role or bursary<input name="role" maxlength="100" placeholder="e.g. IT bursary 2027"></label>
+    <label>Deadline<input name="deadline" type="date"></label>
+    <label>Status
+      <select name="status"><option>Planned</option><option>Applied</option><option>Interview</option><option>Offer</option><option>Rejected</option></select>
+    </label>
+    <label class="wide">Notes<textarea name="notes" rows="2" maxlength="500" placeholder="Documents needed, contact person, link"></textarea></label>
+    <div class="wide"><button type="submit">Add application</button></div>
+  </form>
+
+  <div id="msg" role="alert"></div>
+  <ul id="list"></ul>
+</main>
+
+<script>
+const API = "/api/applications";
+const STATUSES = ["Planned", "Applied", "Interview", "Offer", "Rejected"];
+const list = document.getElementById("list");
+const msg = document.getElementById("msg");
+
+async function call(path, options) {
+  const res = await fetch(path, options);
+  if (res.status === 204) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed.");
+  return data;
+}
+
+function daysLeft(deadline) {
+  if (!deadline) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(deadline + "T00:00:00") - today) / 86400000);
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function render(items) {
+  list.replaceChildren();
+  if (!items.length) { list.append(el("li", "empty", "Nothing tracked yet. Add your first application above.")); return; }
+  for (const item of items) {
+    const d = daysLeft(item.deadline);
+    const due = el("div", "due " + (d === null ? "past" : d < 0 ? "past" : d <= 7 ? "soon" : "ok"));
+    due.append(el("b", "", d === null ? "–" : d < 0 ? "Past" : String(d)), el("span", "", d === null ? "no deadline" : d < 0 ? "deadline" : d === 1 ? "day left" : "days left"));
+
+    const body = el("div");
+    body.append(el("div", "title", item.organisation + (item.role ? " – " + item.role : "")));
+    body.append(el("div", "meta", [item.deadline, item.notes].filter(Boolean).join("  |  ")));
+
+    const status = el("select");
+    status.setAttribute("aria-label", "Status for " + item.organisation);
+    for (const s of STATUSES) { const o = el("option", "", s); o.selected = s === item.status; status.append(o); }
+    status.onchange = () => act(() => call(`${API}/${item.id}`, { method: "PUT", body: JSON.stringify({ status: status.value }) }));
+
+    const del = el("button", "ghost", "Delete");
+    del.onclick = () => act(() => call(`${API}/${item.id}`, { method: "DELETE" }));
+
+    const actions = el("div", "actions"); actions.append(status, del);
+    const row = el("li"); row.append(due, body, actions);
+    list.append(row);
+  }
+}
+
+async function load() {
+  try { render(await call(API)); msg.textContent = ""; }
+  catch (e) { msg.textContent = "Could not load applications: " + e.message; }
+}
+
+async function act(fn) {
+  try { await fn(); msg.textContent = ""; } catch (e) { msg.textContent = e.message; }
+  load();
+}
+
+document.getElementById("form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  const body = JSON.stringify(Object.fromEntries(new FormData(form)));
+  act(() => call(API, { method: "POST", body })).then(() => form.reset());
+});
+
+load();
+</script>
+</body>
+</html>
